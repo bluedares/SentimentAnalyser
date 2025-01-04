@@ -1,0 +1,62 @@
+Analysis Time: 2025-01-04 11:32:06
+
+
+Emotion Distribution:
+
+Emotion	Count
+Satisfaction	9
+Happiness	3
+Excitement	2
+Neutral	1
+Suggestion	1
+Disappointment	1
+Confusion	1
+
+User Information:
+
+Name	Device	Client ID	Emotion	Review Preview
+Mantu Sikka	Galaxy J7 Prime2		Satisfaction	daily hunt is useful application for all age categories you can search all types of content
+Ramakrishna Yadav	V2116		Neutral	ok
+Govind Kendre	Galaxy A13		Excitement	awesome app
+Sri murugan Sri murugan	JioPhone Next		Satisfaction	Super
+Nandkishore Patidar	motorola edge 50 fusion	 (Client ID: dh.SXdoOXJQbEQ3WDZ1YTQ3K2g3VTFYQT09A))	Satisfaction	very nice app with all kind of content from multiple sites.
+Arun Kumar Kumar	V30		Excitement	super 👍
+Vedamurthy B R Vedu	Redmi 9T		Joy	👍
+Vikas Parpiyani	vivo 1935		Suggestion	Xpresso main agar news save karne ka option aa jaye to aur bi acha ho jayega.
+dundappa yalagudri	Redmi Note 7		Joy	Excellent
+Kishore Kumar	Redmi 13C		Satisfaction	good
+Atikurrahman	HONOR Magic6 Lite 5G	 (Client ID: 1395577866))	Satisfaction	Good App
+Dr. Bijay Kumar Goswami	OnePlus Nord CE4 Lite 5G		Satisfaction	Excellent NEWS Posting,
+Aman Kumar	Galaxy M52 5G		Disappointment	No widget available,
+Soni Devi	Y27		Satisfaction	nice app
+Usha Paranjpe	Redmi Note 12		Joy	बहुत बढ़िया
+Harshitha H C Harshitha H C	vivo Y22		Satisfaction	good
+Md Javeed	Redmi Note 7		Satisfaction	Very good.
+raghu ak	vivo 1820		Confusion	രാകേ.
+
+Summary:
+
+Number of Reviews: 18
+Average Rating: 4.61 stars
+
+Detailed Review Analysis:
+
+User	Emotion	Rating	Device	Review
+Aman Kumar	Disappointment	1.0 stars	Galaxy M52 5G	No widget available,
+Arun Kumar Kumar	Excitement	5.0 stars	V30	super 👍
+Atikurrahman	Satisfaction	5.0 stars	HONOR Magic6 Lite 5G	Good App
+Dr. Bijay Kumar Goswami	Satisfaction	5.0 stars	OnePlus Nord CE4 Lite 5G	Excellent NEWS Posting,
+Govind Kendre	Excitement	5.0 stars	Galaxy A13	awesome app
+Harshitha H C Harshitha H C	Satisfaction	4.0 stars	vivo Y22	good
+Kishore Kumar	Satisfaction	5.0 stars	Redmi 13C	good
+Mantu Sikka	Satisfaction	5.0 stars	Galaxy J7 Prime2	daily hunt is useful application for all age ca...
+Md Javeed	Satisfaction	5.0 stars	Redmi Note 7	Very good.
+Nandkishore Patidar	Satisfaction	5.0 stars	motorola edge 50 fusion	very nice app with all kind of content from mul...
+Ramakrishna Yadav	Neutral	5.0 stars	V2116	ok
+Soni Devi	Satisfaction	5.0 stars	Y27	nice app
+Sri murugan Sri murugan	Satisfaction	5.0 stars	JioPhone Next	Super
+Usha Paranjpe	Joy	3.0 stars	Redmi Note 12	बहुत बढ़िया
+Vedamurthy B R Vedu	Joy	5.0 stars	Redmi 9T	👍
+Vikas Parpiyani	Suggestion	5.0 stars	vivo 1935	Xpresso main agar news save karne ka option aa ...
+dundappa yalagudri	Joy	5.0 stars	Redmi Note 7	Excellent
+raghu ak	Confusion	5.0 stars	vivo 1820	രാകേ.
