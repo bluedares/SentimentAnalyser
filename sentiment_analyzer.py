@@ -1,7 +1,7 @@
 from langchain_openai import ChatOpenAI
 import google.generativeai as genai
 import os
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from models.review import Review
 import pandas as pd
 from tabulate import tabulate
@@ -14,11 +14,24 @@ import sys
 from enum import Enum
 from rich.console import Console
 from rich.table import Table
+import json
+import random
 
 class ModelType(Enum):
     OPENAI = "openai"
     GEMINI = "gemini"
     BOTH = "both"
+
+class Emotion(Enum):
+    SATISFACTION = "Satisfaction"
+    HAPPINESS = "Happiness"
+    APPRECIATION = "Appreciation"
+    EXCITEMENT = "Excitement"
+    NEUTRAL = "Neutral"
+    DISAPPOINTMENT = "Disappointment"
+    FRUSTRATION = "Frustration"
+    ANGER = "Anger"
+    CONFUSION = "Confusion"
 
 class LoadingSpinner:
     def __init__(self, message="Processing"):
@@ -61,24 +74,135 @@ class SentimentAnalyzer:
             genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
             self.gemini_model = genai.GenerativeModel('gemini-pro')
         
-        # Define the sentiment analysis prompt template
-        self.prompt_template = """Analyze this app store review and provide a JSON-formatted response with:
-        1. sentiment: (Positive/Negative/Neutral)
-        2. confidence_score: (0-100)
-        3. key_aspects: [list of key features/issues mentioned]
-        4. main_emotion: (primary emotion expressed)
-        5. summary: (brief one-line summary)
+        # Emotion mappings
+        self.emotion_mappings = {
+            # Satisfaction group
+            'satisfied': Emotion.SATISFACTION,
+            'content': Emotion.SATISFACTION,
+            'pleased': Emotion.SATISFACTION,
+            'satisfaction': Emotion.SATISFACTION,
+            
+            # Happiness group
+            'happy': Emotion.HAPPINESS,
+            'joy': Emotion.HAPPINESS,
+            'delight': Emotion.HAPPINESS,
+            'happiness': Emotion.HAPPINESS,
+            'cheerful': Emotion.HAPPINESS,
+            
+            # Appreciation group
+            'grateful': Emotion.APPRECIATION,
+            'thankful': Emotion.APPRECIATION,
+            'appreciative': Emotion.APPRECIATION,
+            'appreciation': Emotion.APPRECIATION,
+            
+            # Excitement group
+            'excited': Emotion.EXCITEMENT,
+            'enthusiastic': Emotion.EXCITEMENT,
+            'thrilled': Emotion.EXCITEMENT,
+            'excitement': Emotion.EXCITEMENT,
+            
+            # Neutral group
+            'neutral': Emotion.NEUTRAL,
+            'indifferent': Emotion.NEUTRAL,
+            'okay': Emotion.NEUTRAL,
+            'moderate': Emotion.NEUTRAL,
+            
+            # Disappointment group
+            'disappointed': Emotion.DISAPPOINTMENT,
+            'letdown': Emotion.DISAPPOINTMENT,
+            'dissatisfied': Emotion.DISAPPOINTMENT,
+            'disappointment': Emotion.DISAPPOINTMENT,
+            
+            # Frustration group
+            'frustrated': Emotion.FRUSTRATION,
+            'annoyed': Emotion.FRUSTRATION,
+            'irritated': Emotion.FRUSTRATION,
+            'frustration': Emotion.FRUSTRATION,
+            
+            # Anger group
+            'angry': Emotion.ANGER,
+            'upset': Emotion.ANGER,
+            'mad': Emotion.ANGER,
+            'anger': Emotion.ANGER,
+            
+            # Confusion group
+            'confused': Emotion.CONFUSION,
+            'uncertain': Emotion.CONFUSION,
+            'unsure': Emotion.CONFUSION,
+            'confusion': Emotion.CONFUSION,
+        }
         
-        Review Text: {review}"""
+        # Define the sentiment analysis prompt template
+        emotions_list = ", ".join([e.value for e in Emotion])
+        self.prompt_template = """Analyze the emotional content of this review and provide a brief summary.
+        Choose EXACTLY ONE emotion from this list: {}
+        
+        Guidelines:
+        1. Select the most appropriate emotion from the provided list
+        2. Do not use any emotions outside this list
+        3. Provide a brief explanation for the chosen emotion
+        
+        Review Text: {{}}""".format(emotions_list)
+        
+        # Rate limiting settings
+        self.max_retries = 5
+        self.initial_delay = 1  # Initial delay in seconds
+        self.max_delay = 32     # Maximum delay in seconds
+        self.batch_size = 5     # Number of reviews to process in parallel
+        self.delay_between_batches = 2  # Delay between batches in seconds
+
+    def _handle_api_error(self, e: Exception, attempt: int, review_author: str) -> Optional[str]:
+        """Handle API errors with exponential backoff"""
+        if attempt >= self.max_retries:
+            print(f"Error analyzing review from {review_author}: Maximum retries exceeded")
+            return None
+            
+        if hasattr(e, 'status_code'):
+            if e.status_code == 429:  # Rate limit exceeded
+                delay = min(self.initial_delay * (2 ** attempt) + random.uniform(0, 1), self.max_delay)
+                print(f"\nRate limit hit, waiting {delay:.2f} seconds before retry...")
+                time.sleep(delay)
+                return None
+            elif e.status_code >= 500:  # Server error
+                delay = min(self.initial_delay * (2 ** attempt), self.max_delay)
+                time.sleep(delay)
+                return None
+                
+        print(f"Error analyzing review from {review_author}: {str(e)}")
+        return None
+
+    def _analyze_with_openai(self, review_text: str, review_author: str, attempt: int = 0) -> Optional[str]:
+        """Analyze review using OpenAI with retry logic"""
+        try:
+            response = self.openai_model.invoke(
+                self.prompt_template.format(review_text)
+            )
+            return response.content
+        except Exception as e:
+            result = self._handle_api_error(e, attempt, review_author)
+            if result is None and attempt < self.max_retries:
+                return self._analyze_with_openai(review_text, review_author, attempt + 1)
+            return result
+
+    def _analyze_with_gemini(self, review_text: str, review_author: str, attempt: int = 0) -> Optional[str]:
+        """Analyze review using Gemini with retry logic"""
+        try:
+            response = self.gemini_model.generate_content(
+                self.prompt_template.format(review_text)
+            )
+            return response.text
+        except Exception as e:
+            result = self._handle_api_error(e, attempt, review_author)
+            if result is None and attempt < self.max_retries:
+                return self._analyze_with_gemini(review_text, review_author, attempt + 1)
+            return result
 
     def analyze_with_openai(self, review: Review) -> Dict[str, Any]:
         """Analyze sentiment using OpenAI's model"""
-        response = self.openai_model.invoke(
-            self.prompt_template.format(review=review.text)
-        )
+        response = self._analyze_with_openai(review.text, review.author)
         return {
             "model": "ChatGPT",
-            "analysis": response.content,
+            "analysis": response,
             "stars": review.stars,
             "author": review.author,
             "date": review.date,
@@ -91,13 +215,10 @@ class SentimentAnalyzer:
 
     def analyze_with_gemini(self, review: Review) -> Dict[str, Any]:
         """Analyze sentiment using Google's Gemini model"""
-        response = self.gemini_model.generate_content(
-            self.prompt_template.format(review=review.text)
-        )
-        
+        response = self._analyze_with_gemini(review.text, review.author)
         return {
             "model": "Gemini",
-            "analysis": response.text,
+            "analysis": response,
             "stars": review.stars,
             "author": review.author,
             "date": review.date,
@@ -108,23 +229,72 @@ class SentimentAnalyzer:
             "client_id": review.client_id
         }
 
-    def extract_emotion(self, analysis_text: str) -> str:
-        """Extract emotion from analysis text"""
+    def map_to_predefined_emotion(self, text: str) -> Emotion:
+        """Map any emotion text to our predefined set of emotions"""
+        # Extract the first word (assumed to be the emotion)
+        words = text.lower().split()
+        if not words:
+            return Emotion.NEUTRAL
+            
+        # Try to find a match in our mappings
+        for word in words:
+            if word in self.emotion_mappings:
+                return self.emotion_mappings[word]
+            
+            # Try to find partial matches
+            for emotion_word, emotion in self.emotion_mappings.items():
+                if emotion_word in word or word in emotion_word:
+                    return emotion
+        
+        # Default to neutral if no match found
+        return Emotion.NEUTRAL
+
+    def extract_emotion(self, analysis: str) -> str:
+        """Extract emotion from analysis text and map to predefined emotion"""
         try:
-            emotion_line = [line for line in analysis_text.split('\n') if 'main_emotion' in line.lower()][0]
-            emotion = emotion_line.split(':')[1].strip().strip('",').lower()
-            # Capitalize first letter
-            return emotion.capitalize()
+            # Get the first line or sentence which should contain the emotion
+            first_line = analysis.split('\n')[0].split('.')[0]
+            mapped_emotion = self.map_to_predefined_emotion(first_line)
+            return mapped_emotion.value
         except:
-            return "Unknown"
+            return Emotion.NEUTRAL.value
+
+    def determine_sentiment(self, stars: int, emotion: str) -> str:
+        """Determine sentiment based on stars and emotion"""
+        # Map emotions to sentiments
+        positive_emotions = [
+            Emotion.SATISFACTION.value,
+            Emotion.HAPPINESS.value,
+            Emotion.APPRECIATION.value,
+            Emotion.EXCITEMENT.value
+        ]
+        
+        negative_emotions = [
+            Emotion.DISAPPOINTMENT.value,
+            Emotion.FRUSTRATION.value,
+            Emotion.ANGER.value
+        ]
+        
+        # Determine by stars first
+        if stars >= 4:
+            return "Positive"
+        elif stars <= 2:
+            return "Negative"
+        
+        # For 3 stars, use emotion to determine
+        if emotion in positive_emotions:
+            return "Positive"
+        elif emotion in negative_emotions:
+            return "Negative"
+        return "Neutral"
 
     def analyze_reviews(self, reviews_text: str) -> pd.DataFrame:
         """Analyze multiple reviews and return a DataFrame with results"""
         # Parse reviews
+        print(f"{Fore.CYAN}Parsing reviews...{Fore.WHITE}")
         reviews = []
         current_review = []
         
-        print(f"{Fore.CYAN}Parsing reviews...{Fore.WHITE}")
         for line in reviews_text.split('\n'):
             if line.strip():
                 current_review.append(line)
@@ -245,10 +415,12 @@ class SentimentAnalyzer:
         # Only print to console, don't add to file
         print(sentiment_tables['display'])
         
-        # Process emotions
+        # Process emotions and sentiments
         print(f"\n{Fore.CYAN}Processing emotions...{Fore.WHITE}")
         emotions = []
         emotion_by_review = {}
+        sentiment_by_review = {}
+        sentiment_counts = {'Positive': 0, 'Negative': 0, 'Neutral': 0}
         
         for _, row in df.iterrows():
             try:
@@ -256,8 +428,32 @@ class SentimentAnalyzer:
                 emotions.append(emotion.lower())
                 review_key = (row['author'], row['text'])
                 emotion_by_review[review_key] = emotion
+                sentiment = self.determine_sentiment(row['stars'], emotion)
+                sentiment_by_review[review_key] = sentiment
+                sentiment_counts[sentiment] += 1
             except:
                 continue
+        
+        # Display sentiment summary
+        print(f"\n{Fore.CYAN}=== Sentiment Summary ==={Fore.WHITE}")
+        file_content.append("\nSentiment Distribution:\n")
+        
+        total_reviews = sum(sentiment_counts.values())
+        sentiment_data = []
+        for sentiment, count in sentiment_counts.items():
+            percentage = (count / total_reviews * 100) if total_reviews > 0 else 0
+            sentiment_data.append([
+                sentiment,
+                count,
+                f"{percentage:.1f}%"
+            ])
+        
+        sentiment_tables = self.format_table_dual(
+            sentiment_data,
+            ['Sentiment', 'Count', 'Percentage']
+        )
+        print(sentiment_tables['display'])
+        file_content.append(sentiment_tables['copy'])
         
         # Count emotions
         emotion_counts = {}
@@ -285,12 +481,21 @@ class SentimentAnalyzer:
             # File content with simple title
             file_content.append("\nEmotion Distribution:\n")
             
-            emotion_data = [[emotion.capitalize(), count] for emotion, count in 
-                          sorted(emotion_counts.items(), key=lambda x: x[1], reverse=True)]
+            emotion_data = []
+            for emotion, count in sorted(emotion_counts.items(), key=lambda x: x[1], reverse=True):
+                # Get sentiment for this emotion using a sample review
+                sample_review = next((key for key, val in emotion_by_review.items() if val.lower() == emotion.lower()), None)
+                sentiment = sentiment_by_review.get(sample_review, "Neutral")
+                
+                emotion_data.append([
+                    emotion.capitalize(),
+                    count,
+                    sentiment
+                ])
             
             emotion_tables = self.format_table_dual(
                 emotion_data,
-                ['Emotion', 'Count']
+                ['Emotion', 'Count', 'Sentiment']
             )
             print(emotion_tables['display'])
             file_content.append(emotion_tables['copy'])
@@ -306,19 +511,22 @@ class SentimentAnalyzer:
                 client_id = f" (Client ID: {client_id})"
             
             emotion = self.extract_emotion(row['analysis'])
+            review_key = (row['author'], row['text'])
+            sentiment = sentiment_by_review.get(review_key, "Neutral")
             
             user_data.append([
                 row['author'],
                 row['device'],
                 client_id,
                 emotion,
-                row['stars'],  
+                sentiment,
+                row['stars'],
                 row['text'][:100] + ('...' if len(row['text']) > 100 else '')
             ])
         
         user_tables = self.format_table_dual(
             user_data,
-            ['Name', 'Device', 'Client ID', 'Emotion', 'Rating', 'Review Preview']  
+            ['Name', 'Device', 'Client ID', 'Emotion', 'Sentiment', 'Rating', 'Review Preview']
         )
         print(user_tables['display'])
         file_content.append(user_tables['copy'])
