@@ -16,6 +16,14 @@ from rich.console import Console
 from rich.table import Table
 import json
 import random
+from rich import box
+from rich.style import Style
+from typing import Tuple
+from io import StringIO
+from datetime import datetime
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 class ModelType(Enum):
     OPENAI = "openai"
@@ -150,7 +158,36 @@ class SentimentAnalyzer:
         self.max_delay = 32     # Maximum delay in seconds
         self.batch_size = 5     # Number of reviews to process in parallel
         self.delay_between_batches = 2  # Delay between batches in seconds
-
+        
+        # Initialize Rich console
+        self.console = Console()
+        
+        # Define styles for different sentiments
+        self.sentiment_styles = {
+            'Positive': Style(color="green"),
+            'Negative': Style(color="red"),
+            'Neutral': Style(color="yellow")
+        }
+        
+        # Excel styling
+        self.header_style = {
+            'font': Font(bold=True, color='FFFFFF'),
+            'fill': PatternFill(start_color='366092', end_color='366092', fill_type='solid'),
+            'alignment': Alignment(horizontal='center'),
+            'border': Border(
+                bottom=Side(style='thin'),
+                top=Side(style='thin'),
+                left=Side(style='thin'),
+                right=Side(style='thin')
+            )
+        }
+        
+        self.sentiment_colors = {
+            'Positive': PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid'),
+            'Negative': PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid'),
+            'Neutral': PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')
+        }
+        
     def _handle_api_error(self, e: Exception, attempt: int, review_author: str) -> Optional[str]:
         """Handle API errors with exponential backoff"""
         if attempt >= self.max_retries:
@@ -259,34 +296,26 @@ class SentimentAnalyzer:
         except:
             return Emotion.NEUTRAL.value
 
-    def determine_sentiment(self, stars: int, emotion: str) -> str:
-        """Determine sentiment based on stars and emotion"""
-        # Map emotions to sentiments
-        positive_emotions = [
-            Emotion.SATISFACTION.value,
-            Emotion.HAPPINESS.value,
-            Emotion.APPRECIATION.value,
-            Emotion.EXCITEMENT.value
-        ]
+    def determine_sentiment(self, rating: float, emotion: str) -> str:
+        """Determine sentiment based on emotion first, then rating"""
+        # Define emotion categories
+        negative_emotions = {'anger', 'frustration', 'disappointment', 'sadness', 'disgust'}
+        positive_emotions = {'satisfaction', 'happiness', 'appreciation', 'excitement'}
         
-        negative_emotions = [
-            Emotion.DISAPPOINTMENT.value,
-            Emotion.FRUSTRATION.value,
-            Emotion.ANGER.value
-        ]
+        # First check emotion
+        emotion_lower = emotion.lower()
+        if emotion_lower in negative_emotions:
+            return 'Negative'
+        elif emotion_lower in positive_emotions:
+            return 'Positive'
         
-        # Determine by stars first
-        if stars >= 4:
-            return "Positive"
-        elif stars <= 2:
-            return "Negative"
-        
-        # For 3 stars, use emotion to determine
-        if emotion in positive_emotions:
-            return "Positive"
-        elif emotion in negative_emotions:
-            return "Negative"
-        return "Neutral"
+        # If emotion is neutral (or not in our lists), then use rating
+        if rating <= 2:
+            return 'Negative'
+        elif rating == 3:
+            return 'Neutral'
+        else:
+            return 'Positive'
 
     def analyze_reviews(self, reviews_text: str) -> pd.DataFrame:
         """Analyze multiple reviews and return a DataFrame with results"""
@@ -332,88 +361,151 @@ class SentimentAnalyzer:
         df = pd.DataFrame(results)
         return df
 
-    def save_analysis_results(self, content: str, filename: str = "review_analysis.txt", mode: str = 'w') -> None:
-        """Save the analysis content to a file"""
-        try:
-            with open(filename, mode, encoding='utf-8') as f:
-                f.write(content)
-            if mode == 'w':
-                print(f"\n{Fore.GREEN}Analysis results saved to {filename}{Fore.WHITE}")
-        except Exception as e:
-            print(f"\n{Fore.RED}Error saving to file: {str(e)}{Fore.WHITE}")
-
-    def format_table_dual(self, data, headers):
-        """
-        Format data into both display (grid) and copy-paste (tab-separated) formats.
-        Returns both versions for flexible output.
-        """
-        if not data:
-            return {"display": "", "copy": ""}
+    def save_excel_report(self, summary_data, sentiment_data, emotion_data, user_data):
+        """Save analysis results to an Excel file with formatting"""
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Analysis Results"
         
-        # Calculate column widths for display version
-        widths = []
-        for i, header in enumerate(headers):
-            column_data = [str(row[i]) for row in data]
-            widths.append(max(len(header), max(len(str(x)) for x in column_data)))
+        current_row = 1
+        max_col_used = 1
         
-        # Create display version (grid format)
-        display_lines = []
-        separator = "+".join("-" * (w + 2) for w in widths)
-        separator = "+" + separator + "+"
+        def write_table(ws, title, headers, data, start_row, is_summary=False):
+            nonlocal max_col_used
+            # Write title with background color
+            title_cell = ws.cell(row=start_row, column=1)
+            title_cell.value = title
+            title_cell.font = Font(bold=True, size=12, color="FFFFFF")  # White text
+            title_cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")  # Dark blue background
+            title_cell.alignment = Alignment(horizontal='center')
+            
+            if is_summary:
+                # Merge the two columns for the title
+                ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=2)
+                max_col_used = max(max_col_used, 2)
+                
+                # For summary, write data directly under title
+                for row_idx, (label, value) in enumerate(data):
+                    # Label cell
+                    label_cell = ws.cell(row=start_row + row_idx + 1, column=1)
+                    label_cell.value = label
+                    label_cell.font = Font(bold=True)
+                    label_cell.alignment = Alignment(horizontal='center')
+                    
+                    # Value cell
+                    value_cell = ws.cell(row=start_row + row_idx + 1, column=2)
+                    value_cell.value = value
+                    value_cell.alignment = Alignment(horizontal='center')
+                    
+                    # Add border and background
+                    for cell in [label_cell, value_cell]:
+                        cell.border = Border(
+                            left=Side(style='thin'),
+                            right=Side(style='thin'),
+                            top=Side(style='thin'),
+                            bottom=Side(style='thin')
+                        )
+                        cell.fill = PatternFill(start_color="E8F3FF", end_color="E8F3FF", fill_type="solid")
+                
+                return start_row + len(data) + 1
+            else:
+                # Update max columns used
+                max_col_used = max(max_col_used, len(headers))
+                
+                # Merge cells for the title
+                ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=len(headers))
+                
+                # Write headers
+                header_row = start_row + 1
+                for col, header in enumerate(headers, 1):
+                    cell = ws.cell(row=header_row, column=col)
+                    cell.value = header
+                    cell.font = self.header_style['font']
+                    cell.fill = self.header_style['fill']
+                    cell.alignment = Alignment(horizontal='center')
+                    cell.border = self.header_style['border']
+                
+                # Write data
+                for row_idx, row_data in enumerate(data, header_row + 1):
+                    for col_idx, value in enumerate(row_data, 1):
+                        cell = ws.cell(row=row_idx, column=col_idx)
+                        cell.value = value
+                        cell.alignment = Alignment(horizontal='center')
+                        
+                        # Apply sentiment colors
+                        if headers[col_idx-1].lower() == 'sentiment':
+                            cell.fill = self.sentiment_colors.get(str(value), PatternFill())
+                        
+                        # Add border
+                        cell.border = Border(
+                            left=Side(style='thin'),
+                            right=Side(style='thin'),
+                            top=Side(style='thin'),
+                            bottom=Side(style='thin')
+                        )
+                
+                return row_idx + 2
         
-        # Add headers
-        header_row = "|"
-        for i, header in enumerate(headers):
-            header_row += f" {header:{widths[i]}} |"
+        # Write Summary first
+        current_row = write_table(
+            ws=ws,
+            title="Summary",
+            headers=[],  # No headers for summary
+            data=summary_data,
+            start_row=current_row,
+            is_summary=True
+        )
         
-        display_lines.extend([separator, header_row, separator])
+        # Add spacing
+        current_row += 1
         
-        # Add data rows
-        for row in data:
-            data_row = "|"
-            for i, cell in enumerate(row):
-                data_row += f" {str(cell):{widths[i]}} |"
-            display_lines.append(data_row)
+        # Write Sentiment Summary
+        current_row = write_table(
+            ws=ws,
+            title="Sentiment Distribution",
+            headers=['Sentiment', 'Count', 'Percentage'],
+            data=sentiment_data,
+            start_row=current_row
+        )
         
-        display_lines.append(separator)
+        # Add spacing
+        current_row += 1
         
-        # Create copy-paste version (tab-separated)
-        copy_lines = []
-        copy_lines.append("\t".join(headers))
-        for row in data:
-            copy_lines.append("\t".join(str(cell) for cell in row))
+        # Write Emotion Summary
+        if emotion_data:
+            current_row = write_table(
+                ws=ws,
+                title="Emotion Distribution",
+                headers=['Emotion', 'Count', 'Sentiment'],
+                data=emotion_data,
+                start_row=current_row
+            )
+            
+            # Add spacing
+            current_row += 1
         
-        return {
-            "display": "\n".join(display_lines),
-            "copy": "\n".join(copy_lines)
-        }
+        # Write User Details
+        current_row = write_table(
+            ws=ws,
+            title="User Information",
+            headers=['Name', 'Device', 'Client ID', 'Emotion', 'Sentiment', 'Rating', 'Review Preview'],
+            data=user_data,
+            start_row=current_row
+        )
+        
+        # Hide unused columns and rows
+        self.cleanup_worksheet(ws, current_row, max_col_used)
+        
+        # Save the workbook
+        excel_file = 'review_analysis.xlsx'
+        wb.save(excel_file)
+        return excel_file
 
     def display_analysis(self, df: pd.DataFrame) -> None:
-        """Display the analysis results in a formatted table"""
-        # Initialize content for file
-        from datetime import datetime
+        """Display the analysis results in formatted tables"""
+        # Initialize content for text file
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         file_content = [f"Analysis Time: {timestamp}\n"]
-        
-        # Sentiment Analysis Results (console only)
-        print(f"\n{Fore.CYAN}=== Sentiment Analysis Results ==={Fore.WHITE}\n")
-        
-        # Format the sentiment analysis table
-        sentiment_data = []
-        for _, row in df.iterrows():
-            sentiment_data.append([
-                row['author'],
-                row['stars'],
-                row['model'],
-                row['analysis']
-            ])
-        
-        sentiment_tables = self.format_table_dual(
-            sentiment_data,
-            ['Author', 'Stars', 'Model', 'Analysis']
-        )
-        # Only print to console, don't add to file
-        print(sentiment_tables['display'])
         
         # Process emotions and sentiments
         print(f"\n{Fore.CYAN}Processing emotions...{Fore.WHITE}")
@@ -422,6 +514,7 @@ class SentimentAnalyzer:
         sentiment_by_review = {}
         sentiment_counts = {'Positive': 0, 'Negative': 0, 'Neutral': 0}
         
+        # First pass: Process emotions and determine sentiments
         for _, row in df.iterrows():
             try:
                 emotion = self.extract_emotion(row['analysis'])
@@ -431,80 +524,54 @@ class SentimentAnalyzer:
                 sentiment = self.determine_sentiment(row['stars'], emotion)
                 sentiment_by_review[review_key] = sentiment
                 sentiment_counts[sentiment] += 1
-            except:
+            except Exception as e:
+                print(f"Error processing row: {e}")
                 continue
+        
+        # Calculate summary statistics
+        total_reviews = len(df)
+        avg_rating = df['stars'].mean()
+        
+        # Add summary at the top for text file
+        file_content.append("Summary:")
+        file_content.append(f"Number of Reviews: {total_reviews}")
+        file_content.append(f"Average Rating: {avg_rating:.2f} stars\n")
         
         # Display sentiment summary
         print(f"\n{Fore.CYAN}=== Sentiment Summary ==={Fore.WHITE}")
-        file_content.append("\nSentiment Distribution:\n")
-        
-        total_reviews = sum(sentiment_counts.values())
         sentiment_data = []
         for sentiment, count in sentiment_counts.items():
             percentage = (count / total_reviews * 100) if total_reviews > 0 else 0
-            sentiment_data.append([
-                sentiment,
-                count,
-                f"{percentage:.1f}%"
-            ])
+            sentiment_data.append([sentiment, count, f"{percentage:.1f}%"])
         
-        sentiment_tables = self.format_table_dual(
-            sentiment_data,
-            ['Sentiment', 'Count', 'Percentage']
-        )
-        print(sentiment_tables['display'])
-        file_content.append(sentiment_tables['copy'])
+        # Add sentiment distribution to text file
+        file_content.append("\nSentiment Distribution:")
+        output = StringIO()
+        sentiment_df = pd.DataFrame(sentiment_data, columns=['Sentiment', 'Count', 'Percentage'])
+        sentiment_df.to_csv(output, sep='\t', index=False)
+        file_content.append(output.getvalue())
         
-        # Count emotions
-        emotion_counts = {}
-        for emotion in emotions:
-            if emotion in ['satisfaction', 'pleased', 'content', 'satisfied']:
-                base_emotion = 'satisfaction'
-            elif emotion in ['happiness', 'joy', 'delight', 'happy']:
-                base_emotion = 'happiness'
-            elif emotion in ['appreciation', 'gratitude', 'thankful']:
-                base_emotion = 'appreciation'
-            elif emotion in ['neutral', 'indifferent']:
-                base_emotion = 'neutral'
-            elif emotion in ['excitement', 'enthusiastic', 'excited']:
-                base_emotion = 'excitement'
-            else:
-                base_emotion = emotion
-            
-            emotion_counts[base_emotion] = emotion_counts.get(base_emotion, 0) + 1
-        
-        # Display emotion summary
-        if emotion_counts:
-            # Console display with decoration
+        # Process emotions
+        emotion_data = []
+        if emotion_counts := {e: emotions.count(e) for e in set(emotions)}:
             print(f"\n{Fore.CYAN}=== Emotion Summary ==={Fore.WHITE}")
             
-            # File content with simple title
-            file_content.append("\nEmotion Distribution:\n")
-            
-            emotion_data = []
             for emotion, count in sorted(emotion_counts.items(), key=lambda x: x[1], reverse=True):
-                # Get sentiment for this emotion using a sample review
                 sample_review = next((key for key, val in emotion_by_review.items() if val.lower() == emotion.lower()), None)
                 sentiment = sentiment_by_review.get(sample_review, "Neutral")
-                
-                emotion_data.append([
-                    emotion.capitalize(),
-                    count,
-                    sentiment
-                ])
+                emotion_data.append([emotion.capitalize(), count, sentiment])
             
-            emotion_tables = self.format_table_dual(
-                emotion_data,
-                ['Emotion', 'Count', 'Sentiment']
-            )
-            print(emotion_tables['display'])
-            file_content.append(emotion_tables['copy'])
+            # Add emotion distribution to text file
+            file_content.append("\nEmotion Distribution:")
+            output = StringIO()
+            emotion_df = pd.DataFrame(emotion_data, columns=['Emotion', 'Count', 'Sentiment'])
+            emotion_df.to_csv(output, sep='\t', index=False)
+            file_content.append(output.getvalue())
         
-        # Display user details
+        # Process user details
         print(f"\n{Fore.CYAN}=== User Details ==={Fore.WHITE}")
-        file_content.append("\nUser Information:\n")
-        
         user_data = []
+        
         for _, row in df.iterrows():
             client_id = row.get('client_id', '')
             if client_id:
@@ -524,32 +591,51 @@ class SentimentAnalyzer:
                 row['text'][:100] + ('...' if len(row['text']) > 100 else '')
             ])
         
-        user_tables = self.format_table_dual(
-            user_data,
-            ['Name', 'Device', 'Client ID', 'Emotion', 'Sentiment', 'Rating', 'Review Preview']
-        )
-        print(user_tables['display'])
-        file_content.append(user_tables['copy'])
+        # Add user information to text file
+        file_content.append("\nUser Information:")
+        output = StringIO()
+        user_df = pd.DataFrame(user_data, columns=['Name', 'Device', 'Client ID', 'Emotion', 'Sentiment', 'Rating', 'Review Preview'])
+        user_df.to_csv(output, sep='\t', index=False)
+        file_content.append(output.getvalue())
         
-        # Get unique reviews and stats
-        unique_reviews = df.groupby(['author', 'text']).agg({
-            'stars': 'first',
-            'device': 'first',
-            'client_id': 'first',
-            'manufacturer': 'first'
-        }).reset_index()
-        
-        total_reviews = len(unique_reviews)
-        
-        # Print summary statistics
-        print(f"\n{Fore.CYAN}=== Summary Statistics ==={Fore.WHITE}")
-        file_content.append("\nSummary:\n")
-        stats = f"Number of Reviews: {total_reviews}\nAverage Rating: {df['stars'].mean():.2f} stars"
-        print(stats)
-        file_content.append(stats)
-        
-        # Save all content to file
+        # Save both formats
         self.save_analysis_results('\n'.join(file_content))
+        
+        # Prepare summary data
+        summary_data = [
+            ("Number of Reviews:", f"{total_reviews}"),
+            ("Average Rating:", f"{avg_rating:.2f} stars")
+        ]
+        
+        # Save Excel with summary at top
+        excel_file = self.save_excel_report(summary_data, sentiment_data, emotion_data, user_data)
+        print(f"\n{Fore.GREEN}Analysis saved to review_analysis.txt and {excel_file}{Fore.WHITE}")
+
+    def format_rich_table(self, data: List[List], headers: List[str], title: str = None) -> Table:
+        """Format data into a Rich table for console display"""
+        table = Table(show_header=True, header_style="bold cyan", title=title)
+        
+        # Add columns
+        for header in headers:
+            table.add_column(header, justify="left")
+        
+        # Add rows
+        for row in data:
+            styled_row = []
+            for i, cell in enumerate(row):
+                cell_str = str(cell)
+                if headers[i].lower() == 'sentiment':
+                    color = {
+                        'Positive': 'green',
+                        'Negative': 'red',
+                        'Neutral': 'yellow'
+                    }.get(cell_str, 'white')
+                    styled_row.append(f"[{color}]{cell_str}[/{color}]")
+                else:
+                    styled_row.append(cell_str)
+            table.add_row(*styled_row)
+        
+        return table
 
     def printTable(self, table, align="LLLL", hasHeader=True):
         """Print formatted table with custom alignment
@@ -592,3 +678,37 @@ class SentimentAnalyzer:
         
         result.append(separator_bottom)
         return '\n'.join(result)
+
+    def save_analysis_results(self, content: str, filename: str = "review_analysis.txt", mode: str = 'w') -> None:
+        """Save the analysis content to a file"""
+        try:
+            with open(filename, mode, encoding='utf-8') as f:
+                f.write(content)
+            if mode == 'w':
+                print(f"\n{Fore.GREEN}Analysis results saved to {filename}{Fore.WHITE}")
+        except Exception as e:
+            print(f"\n{Fore.RED}Error saving to file: {str(e)}{Fore.WHITE}")
+
+    def cleanup_worksheet(self, ws, current_row, max_col_used):
+        # Hide unused columns
+        for col in range(max_col_used + 1, ws.max_column + 1):
+            ws.column_dimensions[get_column_letter(col)].hidden = True
+        
+        # Hide unused rows
+        for row in range(current_row + 1, ws.max_row + 1):
+            ws.row_dimensions[row].hidden = True
+        
+        # Adjust column widths for visible columns
+        for col in range(1, max_col_used + 1):
+            column = get_column_letter(col)
+            max_length = 0
+            for cell in ws[column]:
+                if not ws.row_dimensions[cell.row].hidden:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+            
+            adjusted_width = (max_length + 2)
+            ws.column_dimensions[column].width = adjusted_width
