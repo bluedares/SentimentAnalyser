@@ -312,12 +312,13 @@ class SentimentAnalyzer:
                 row['device'],
                 client_id,
                 emotion,
+                row['stars'],  
                 row['text'][:100] + ('...' if len(row['text']) > 100 else '')
             ])
         
         user_tables = self.format_table_dual(
             user_data,
-            ['Name', 'Device', 'Client ID', 'Emotion', 'Review Preview']
+            ['Name', 'Device', 'Client ID', 'Emotion', 'Rating', 'Review Preview']  
         )
         print(user_tables['display'])
         file_content.append(user_tables['copy'])
@@ -338,34 +339,6 @@ class SentimentAnalyzer:
         stats = f"Number of Reviews: {total_reviews}\nAverage Rating: {df['stars'].mean():.2f} stars"
         print(stats)
         file_content.append(stats)
-        
-        # Generate copy-paste friendly table
-        print(f"\n{Fore.CYAN}=== Copy-Paste Friendly Format ==={Fore.WHITE}")
-        file_content.append("\nDetailed Review Analysis:\n")
-        
-        friendly_data = []
-        for _, row in unique_reviews.iterrows():
-            review_key = (row['author'], row['text'])
-            emotion = emotion_by_review.get(review_key, "Unknown")
-            
-            review_text = row['text'].strip()
-            if len(review_text) > 50:
-                review_text = review_text[:47] + "..."
-            
-            friendly_data.append([
-                str(row['author']),
-                emotion,
-                f"{row['stars']} stars",
-                row['device'],
-                review_text
-            ])
-        
-        friendly_tables = self.format_table_dual(
-            friendly_data,
-            ['User', 'Emotion', 'Rating', 'Device', 'Review']
-        )
-        print(friendly_tables['display'])
-        file_content.append(friendly_tables['copy'])
         
         # Save all content to file
         self.save_analysis_results('\n'.join(file_content))
